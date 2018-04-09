@@ -49,7 +49,7 @@ LTE IoT Starter Kit for > 3 seconds.
 /CUSTAPP # 
 ```
 
-7. Exit back to Vagrant machine and reboot StarterKit. After the reboot StarterKit will start sending data to M2X on the background:
+7. Exit back to Vagrant machine and reboot the StarterKit. After the reboot it will start sending data to M2X on the background:
 ```shell
 /CUSTAPP # exit
 vagrant@sk2sdk:~$ adb reboot
