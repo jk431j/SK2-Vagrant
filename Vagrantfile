@@ -26,5 +26,5 @@ Vagrant.configure("2") do |config|
 	v.vmx["usb.autoConnect.device0"]  = "0x1435:0x3182"
   end
 
-  config.vm.provision "shell", path: "provision.sh"
+  config.vm.provision "shell", path: "scripts/provision.sh"
 end

@@ -79,6 +79,7 @@ else
 	git clone ${AVNET_BASE}/${IOT_MON}
 	ln -s ${WORKDIR}/${IOT_MON}/ ~ 2>/dev/null
 	cd $IOT_MON
+	cp /vagrant/M2XSender/* .
 	LC_ALL=C ./autogen.sh 2>/dev/null
 	./configure \$CONFIGURE_FLAGS
 fi
