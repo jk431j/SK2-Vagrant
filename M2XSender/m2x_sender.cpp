@@ -230,15 +230,16 @@ int main(int argc, const char * const * argv )
     if (strptr) {
         printf("device already present.\n");
         strptr = strstr(resp,"\"key\":\"");
-        i=strcspn(strptr+8,"\"");
-        strncpy(api_key,strptr+7,i+1);
+        if (strptr) {
+            i=strcspn(strptr+8,"\"");
+            strncpy(api_key,strptr+7,i+1);
+        };
         strptr = strstr(resp,"\"id\":\"");
         if (strptr) {
             i=strcspn(strptr+7,"\"");
             strncpy(device_id,strptr+6,i+1);
-            }
-        }
-    else {
+        };
+    } else {
         printf("Create a new device.\n");
         if( !strlen(api_key) ) {
             printf("ERROR: must provide an API key!\n");
