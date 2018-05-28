@@ -1,0 +1,24 @@
+Delay=10
+
+[M2X]
+Enable=1
+APIKey=<M2X API key>
+
+[DataFlow]
+Enable=1
+ClientID=<DataFlow Client ID>
+ClientSecret=<DataFlow Secret>
+Organization=<organization>
+Project=<project>
+Component=input
+Class=starterkit
+
+[UDP]
+Enable=1
+Host=<UDP host>
+Port=<UDP port>
+
+[GPS]
+Latitude=<default latitude>
+Longitude=<default longitude>
+

@@ -37,7 +37,7 @@ m2x_sender_SOURCES = m2x_sender.cpp microrl.cpp HTU21D.cpp  \
                       MAX31855.cpp facttest.cpp MS5637.cpp \
                       binio.c jsmn.c  HTS221.cpp mytimer.c \
                       http.c lis2dw12.c m2x.c demo.c wwan.c \
-                      emissions.cpp 
+                      emissions.cpp minIni.c 
 
 bin_PROGRAMS = iot_monitor m2x_sender
 

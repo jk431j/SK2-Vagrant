@@ -33,6 +33,7 @@
 #include <math.h>
 #include <time.h>
 #include <sys/time.h>
+#include <libgen.h>
 
 #include <pthread.h>
 
@@ -59,12 +60,84 @@ char  **lis2dw12_m2x(void);
 #include "m2x.h"
 
 #include "mal.hpp"
+#include "minIni.h"
 
 struct timespec key_press, key_release, keypress_time;
 extern GPIOPIN_IN gpio_input;
 extern gpio_handle_t user_key;
 
 static volatile int bpress;
+
+char IniFile[64];
+
+struct config {
+	int Delay;
+
+	struct {
+		bool Enabled;
+		char APIKey[48];
+	} M2X;
+
+	struct {
+		bool Enabled;
+		char Id[64], 
+		     Secret[64], 
+		     Org[64],
+		     Proj[64], 
+		     Comp[16], 
+		     Class[16];		
+	} DataFlow;
+
+	struct {
+		bool Enabled;
+		char Host[64],
+		     Port[10];		
+	} UDP;
+
+	struct {
+		float Latitude,
+		      Longitude;		
+	} GPS;
+} Config;
+
+
+bool load_config() {
+    ssize_t len = readlink("/proc/self/exe", IniFile, sizeof(IniFile));
+    if (len > 0) {
+        IniFile[len] = 0;
+        strcat(IniFile, ".ini" );
+        printf("Ini file %s\n", IniFile);
+    } else {
+        printf("Cannot determine .ini file name\n");
+        return false;
+    };
+    
+    Config.Delay = ini_getl("", "Delay", 30, IniFile);
+    Config.M2X.Enabled = ini_getbool("M2X", "Enable", 0, IniFile);        
+    int c = ini_gets("M2X", "APIKey", "", Config.M2X.APIKey, sizeof(Config.M2X.APIKey), IniFile);
+    if (Config.M2X.Enabled && !c) {
+        printf("Cannot read M2X API key from .ini file\n");
+    	return false;    
+    };
+
+    Config.DataFlow.Enabled = ini_getbool("DataFlow", "Enable", 0, IniFile);
+    ini_gets("DataFlow","ClientID","", Config.DataFlow.Id, sizeof(Config.DataFlow.Id), IniFile);
+    ini_gets("DataFlow","ClientSecret","", Config.DataFlow.Secret, sizeof(Config.DataFlow.Secret), IniFile);
+    ini_gets("DataFlow","Organization","", Config.DataFlow.Org, sizeof(Config.DataFlow.Org), IniFile);
+    ini_gets("DataFlow","Project","", Config.DataFlow.Proj, sizeof(Config.DataFlow.Proj), IniFile);
+    ini_gets("DataFlow","Component","", Config.DataFlow.Comp, sizeof(Config.DataFlow.Comp), IniFile);
+    ini_gets("DataFlow","Class","", Config.DataFlow.Class, sizeof(Config.DataFlow.Class), IniFile); 
+
+    Config.UDP.Enabled = ini_getbool("UDP", "Enable", 0, IniFile);
+    ini_gets("UDP","Host","", Config.UDP.Host, sizeof(Config.UDP.Host), IniFile);
+    ini_gets("UDP","Port","", Config.UDP.Port, sizeof(Config.UDP.Port), IniFile);
+
+    Config.GPS.Latitude = ini_getf("GPS", "Latitude", 0, IniFile);
+    Config.GPS.Longitude = ini_getf("GPS", "Longitude", 1000, IniFile);
+
+    return true;
+}
+
 
 const char *current_color=NULL;
 static const char *colors[] = {
@@ -172,22 +245,19 @@ int main(int argc, const char * const * argv )
     char         str_val[16];
     double       elapse=0;
     float        adc_voltage;
-
+    float        lat, lng;
     json_keyval    om[20];
     struct timeval start, end;  //measure duration of flow calls...
+    bool gps_fix = false;    
 
-
-    if( argc < 3 ) {
-        printf("Required parameters missing: delay api_key\n");
-	return 0;
-    } else {
-        delay_time = atoi(argv[1]);
-	if (delay_time < 5)
-	   delay_time = 5;
-
-	strcpy(api_key, argv[2]);
-    };
-
+    if (!load_config()) {
+        printf("Failed to load configuration.\n");
+        return 0;
+    }
+    delay_time = Config.Delay;
+    doM2X = Config.M2X.Enabled;
+    lat = Config.GPS.Latitude;
+    lng = Config.GPS.Longitude;
 
     c=start_data_service();
     while ( c < 0 ) {
@@ -206,7 +276,7 @@ int main(int argc, const char * const * argv )
     mySystem.iccid=getICCID(om, sizeof(om));
     strcpy(device_id,  mySystem.iccid.c_str());
     printf("Using ICCID %s as M2X device serial\n", device_id);
-    
+
     gpio_deinit( &gpio_input.hndl);
     bpress = 0;
     gpio_init( GPIO_PIN_98,  &user_key );  //SW3
@@ -218,62 +288,77 @@ int main(int argc, const char * const * argv )
         sleep(10);
         get_wwan_status(om, sizeof(om));
     };
+    mySystem.imei=getIMEI(om, sizeof(om));
+    printf("IMEI: %s\n",mySystem.imei.c_str());
 
-    printf("-Validating API Key and Device ID...\n");
-    m2x_device_info(api_key, device_id,  resp);
-    if (strcasestr(resp,"invalid API key")) {
-	printf("Please specify valid API key. This is what I got from M2X:\n%s\n", resp);
-        return 0;
-    }
+    enableGPS();    
 
-    char *strptr = strstr(resp,"\"name\":\"Global Starter Kit\",");
-    if (strptr) {
-        printf("device already present.\n");
-        strptr = strstr(resp,"\"key\":\"");
-        if (strptr) {
-            i=strcspn(strptr+8,"\"");
-            strncpy(api_key,strptr+7,i+1);
-        };
-        strptr = strstr(resp,"\"id\":\"");
-        if (strptr) {
-            i=strcspn(strptr+7,"\"");
-            strncpy(device_id,strptr+6,i+1);
-        };
-    } else {
-        printf("Create a new device.\n");
-        if( !strlen(api_key) ) {
-            printf("ERROR: must provide an API key!\n");
-            printf("\n\nExiting Quick Start Application.\n");
-            gpio_deinit( &user_key);
-            binario_io_close();
-            binary_io_init();
+    if (doM2X) {
+        printf("-Validating API Key and Device ID...\n");
+        m2x_device_info(Config.M2X.APIKey, device_id,  resp);
+        if (strcasestr(resp,"invalid API key")) {
+        printf("Please specify valid API key. This is what I got from M2X:\n%s\n", resp);
             return 0;
-            }
-        printf("Attempting to create device with id %s\n",  device_id);
-        m2x_create_device(api_key, device_id, resp);
-        i = parse_maljson(resp, om, sizeof(om));
-        strcpy(device_id, om[11].value);
         }
 
-    printf("-Creating the data streams...\n");
-    m2x_create_stream(device_id, api_key, "ADC");
-    m2x_create_stream(device_id, api_key, "TEMP");
-    m2x_create_stream(device_id, api_key, "XVALUE");
-    m2x_create_stream(device_id, api_key, "YVALUE");
-    m2x_create_stream(device_id, api_key, "ZVALUE");
+        char *strptr = strstr(resp,"\"name\":\"Global Starter Kit\",");
+        if (strptr) {
+            printf("device already present.\n");
+            strptr = strstr(resp,"\"key\":\"");
+            if (strptr) {
+                i=strcspn(strptr+8,"\"");
+                strncpy(Config.M2X.APIKey,strptr+7,i+1);
+            };
+            strptr = strstr(resp,"\"id\":\"");
+            if (strptr) {
+                i=strcspn(strptr+7,"\"");
+                strncpy(device_id,strptr+6,i+1);
+            };
+        } else {
+            printf("Create a new device.\n");
+            if( !strlen(Config.M2X.APIKey) ) {
+                printf("ERROR: must provide an API key!\n");
+                printf("\n\nExiting Quick Start Application.\n");
+                gpio_deinit( &user_key);
+                binario_io_close();
+                binary_io_init();
+                return 0;
+                }
+            printf("Attempting to create device with id %s\n",  device_id);
+            m2x_create_device(Config.M2X.APIKey, device_id, resp);
+            i = parse_maljson(resp, om, sizeof(om));
+            strcpy(device_id, om[11].value);
+            }
 
-    sprintf(qsa_url, "https://api-m2x.att.com/devices/%s", device_id);
-    printf("Using API Key = %s, Device Key = %s\n",api_key, device_id);
+        printf("-Creating the data streams...\n");
+        m2x_create_stream(device_id, Config.M2X.APIKey, "ADC");
+        m2x_create_stream(device_id, Config.M2X.APIKey, "TEMP");
+        m2x_create_stream(device_id, Config.M2X.APIKey, "XVALUE");
+        m2x_create_stream(device_id, Config.M2X.APIKey, "YVALUE");
+        m2x_create_stream(device_id, Config.M2X.APIKey, "ZVALUE");
+        m2x_create_stream(device_id, Config.M2X.APIKey, "GPS_STATUS");    
+        printf("Using API Key = %s, Device Key = %s\n",Config.M2X.APIKey, device_id);
+    } else
+        printf("M2X disabled\n");
+
+    if (Config.DataFlow.Enabled) {
+        dataflow_get_token(Config.DataFlow.Id, Config.DataFlow.Secret);
+        dataflow_create_object(Config.DataFlow.Org, Config.DataFlow.Proj, Config.DataFlow.Class, mySystem.iccid.c_str());
+    } else {
+        printf("DataFlow disabled\n");
+    }
+
     printf("LED colors will display a different colors after each set of sensor data is sent to M2X.\n");
     printf("\n");
-    printf("To exit the Quick Start Applicatioin, press the User Button on the Global \n");
+    printf("To exit the Quick Start Application, press the User Button on the Global \n");
     printf("LTE IoT Starter Kit for > 3 seconds.\n\n");
     i=1;
     while( !done ) {
         if( keypress_time.tv_sec > 3 ) {
             done = 1;
             continue;
-            }
+        };
+  
         do_color(current_color="BLUE");
     
         gettimeofday(&start, NULL);
@@ -285,25 +370,61 @@ int main(int argc, const char * const * argv )
 
         printf("%2d. Sending ADC value",i++);
         fflush(stdout);
-        m2x_update_stream_value(device_id, api_key, "ADC", str_val);		
+        m2x_update_stream_value(device_id, Config.M2X.APIKey, "ADC", str_val);		
     
         printf(", TEMP value");
         fflush(stdout);
         sprintf(str_val, "%f", lis2dw12_readTemp12());
-        m2x_update_stream_value(device_id, api_key, "TEMP", str_val);		
+        m2x_update_stream_value(device_id, Config.M2X.APIKey, "TEMP", str_val);		
 
         ptr=lis2dw12_m2x();
 
-        printf(", XYZ values...");
+        printf(", XYZ values");
         fflush(stdout);
-        m2x_update_stream_value(device_id, api_key, "XVALUE", ptr[0]);		
-        m2x_update_stream_value(device_id, api_key, "YVALUE", ptr[1]);		
-        m2x_update_stream_value(device_id, api_key, "ZVALUE", ptr[2]);		
+        m2x_update_stream_value(device_id, Config.M2X.APIKey, "XVALUE", ptr[0]);		
+        m2x_update_stream_value(device_id, Config.M2X.APIKey, "YVALUE", ptr[1]);		
+        m2x_update_stream_value(device_id, Config.M2X.APIKey, "ZVALUE", ptr[2]);		
 
-        printf("All Values sent.");
+        k=getGPSlocation(om,sizeof(om));
+        for(int idx=1; idx<k; idx++ ) {
+            if( !strcmp(om[idx].key,"loc_status") ) {
+                m2x_update_stream_value(device_id, Config.M2X.APIKey, "GPS_STATUS", atoi(om[idx].value)? "1" : "0");
+                gps_fix = om[idx].value[0] != '0';
+            } else if( !strcmp(om[idx].key,"latitude") ) {
+                lat = atof(om[idx].value);
+            } else if( !strcmp(om[idx].key,"longitude") ) {
+                lng = atof(om[idx].value);
+            };
+        };
+/*        
+        gps_fix = true;
+        lat = 47.669;
+        lng = -122.295;
+*/
+        if (gps_fix && doM2X) {
+            printf(", location");            
+            m2x_update_location(device_id, Config.M2X.APIKey,lat,lng);
+        };
+
+        printf(", DataFlow ...");
+        fflush(stdout);
+        get_wwan_status(om, sizeof(om));        
+        if (Config.DataFlow.Enabled)
+            dataflow_ingest_data(Config.DataFlow.Org, Config.DataFlow.Proj, Config.DataFlow.Comp, 
+                                Config.DataFlow.Class, mySystem.iccid.c_str(), 
+                                adc_voltage, lis2dw12_readTemp12(), ptr, om[4].value,
+                                gps_fix, lat, lng);
+
+        if (Config.UDP.Enabled)
+            udp_send(Config.UDP.Host, Config.UDP.Port, mySystem.imei.c_str(), 
+                     adc_voltage, lis2dw12_readTemp12(), ptr, 
+                     gps_fix, lat, lng, 
+                     om[4].value);
+
+        printf(" all Values sent.");
         fflush(stdout);
 
-        do_color(current_color="GREEN");
+        do_color(current_color = gps_fix ? "GREEN" : "MAGENTA");
 
         gettimeofday(&end, NULL);
         elapse = (end.tv_sec - start.tv_sec)*1000 + (end.tv_usec/1000 - start.tv_usec/1000);
@@ -314,7 +435,7 @@ int main(int argc, const char * const * argv )
             }
         else
             printf("\n");
-        }
+    }
     printf("\n\nExiting Quick Start Application.\n");
 
     do_color("OFF");
