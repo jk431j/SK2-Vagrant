@@ -291,6 +291,10 @@ int main(int argc, const char * const * argv )
     mySystem.imei=getIMEI(om, sizeof(om));
     printf("IMEI: %s\n",mySystem.imei.c_str());
 
+    mySystem.appsVer=getAppsVersion(om, sizeof(om));
+    mySystem.firmVer=getFirmwareVersion(om, sizeof(om));
+    printf("Firmware: %s, app %s\n", mySystem.firmVer.c_str(), mySystem.appsVer.c_str());
+    
     enableGPS();    
 
     if (doM2X) {
@@ -346,6 +350,11 @@ int main(int argc, const char * const * argv )
         dataflow_create_object(Config.DataFlow.Org, Config.DataFlow.Proj, Config.DataFlow.Class, mySystem.iccid.c_str());
     } else {
         printf("DataFlow disabled\n");
+    }
+
+    if (Config.UDP.Enabled) {
+        printf("UDP enabled\n");
+        udp_send_init(Config.UDP.Host, Config.UDP.Port, mySystem.imei.c_str(), mySystem.firmVer.c_str(), mySystem.appsVer.c_str());
     }
 
     printf("LED colors will display a different colors after each set of sensor data is sent to M2X.\n");

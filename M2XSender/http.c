@@ -519,23 +519,11 @@ int dataflow_ingest_data( const char *org, const char *project, const char *comp
 }
 
 
-int udp_send(const char *host, const char *port, const char* imei, float light, float temp, char **accel, int gps, float lat, float lng, const char* sig_strength)
+int send_udp_packet(const char *host, const char *port, const char* packet) 
 {
-    char body_buff[128];
-
     int len, udpsocket;
     struct addrinfo hints;
     struct addrinfo *dest; 
-
-    if (lng == 1000)
-       return -1;
-
-    snprintf(body_buff, sizeof(body_buff), "'%s',%.2f,%.3f,%.0f,%.0f,%.0f,%2.3f,%2.3f,%d", 
-            imei, 
-            temp, light, 
-            atof(accel[0]), atof(accel[1]), atof(accel[2]),
-            lat, lng,
-            atoi(sig_strength));
 
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_family = AF_UNSPEC;    
@@ -554,12 +542,43 @@ int udp_send(const char *host, const char *port, const char* imei, float light, 
         return -1;
     };
 
-    if ((len = sendto(udpsocket, body_buff, strlen(body_buff), 0, (struct sockaddr *) dest->ai_addr, dest->ai_addrlen)) == -1) 
+    if ((len = sendto(udpsocket, packet, strlen(packet), 0, (struct sockaddr *) dest->ai_addr, dest->ai_addrlen)) == -1) 
             printf("Failed to send UDP message");
 
     close(udpsocket);               
 
     return len;
+}
+
+
+int udp_send(const char *host, const char *port, const char* imei, float light, float temp, char **accel, int gps, float lat, float lng, const char* sig_strength)
+{
+    char body_buff[128];
+
+    if (lng == 1000)
+       return -1;
+
+    snprintf(body_buff, sizeof(body_buff), "2,'%s',%.2f,%.3f,%.0f,%.0f,%.0f,%d,%2.3f,%2.3f,%d", 
+            imei, 
+            temp, light, 
+            atof(accel[0]), atof(accel[1]), atof(accel[2]),
+            gps, lat, lng,
+            atoi(sig_strength));
+
+    return send_udp_packet(host, port, body_buff);
+}
+
+int udp_send_init(const char *host, const char *port, const char* imei, const char *firmware, const char *app)
+{
+    char body_buff[256];
+
+    snprintf(body_buff, sizeof(body_buff), "2,'%s',%s,%s,%s",
+             imei,
+             "*",
+             firmware,
+             app);
+
+    return send_udp_packet(host, port, body_buff);
 }
 
 

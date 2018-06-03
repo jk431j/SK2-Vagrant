@@ -54,6 +54,9 @@ extern int udp_send(const char *host, const char *port, const char* imei,
                     int gps, float lat, float lng, 
                     const char* sig_strength);
 
+extern int udp_send_init(const char *host, const char *port, const char* imei, 
+                    const char *firmware, const char *app);                    
+
 int m2x_update_color_value ( const char *device_id_ptr, const char *api_key_ptr, const char *stream_name_ptr, const char *stream_value_ptr);
 
 #ifdef __cplusplus
